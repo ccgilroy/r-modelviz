@@ -1,0 +1,13 @@
+.toc-content {
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.sourceCode {
+  font-family: "Fira Mono", monospace;
+}
+
+pre, code {
+  font-family: "Fira Mono", monospace;
+}

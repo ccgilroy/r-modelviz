@@ -1,0 +1,208 @@
+---
+title: "Visualizing Models in R"
+subtitle: "Soc 505"
+author: "Connor Gilroy"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    theme: cosmo
+    highlight: pygments
+    css: styles.css
+    fig_width: 6
+    toc: true
+    toc_float: true
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+```
+
+Today, I'll talk about working with model objects and visualizing models. 
+
+I'll use 3 main packages: 
+
+- `broom`
+- `ggplot2`
+- `ggeffects`
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(haven)
+library(broom)
+library(ggplot2)
+library(ggeffects)
+
+# I have aesthetic opinions
+theme_set(theme_minimal())
+```
+
+# Linear regression
+
+Fit a linear model: 
+
+```{r}
+# data from hw2
+courtpenalties <- read_dta("data/courtpenalties2020_compatible.dta")
+
+f1 <- penalties ~ minority + liberal + popsize + crt + unemp
+model1 <- glm(f1, family = gaussian(), data = courtpenalties)
+summary(model1)
+```
+
+We can extract information from the model with some generic helper functions: 
+
+```{r}
+# coefficients (including the intercept!)
+coef(model1)
+
+# coefficient confidence intervals
+confint(model1)
+
+# measures of model fit
+BIC(model1) 
+
+# residuals
+head(residuals(model1))
+```
+
+# Tidy model output
+
+Is there a tidier way? Yes! That's what `broom` is for.
+
+Want tidy coefficients?
+
+```{r}
+tidy(model1)
+```
+
+Want a quick summary of model fit? 
+
+```{r}
+glance(model1)
+```
+
+Want fitted values and residuals?
+
+```{r}
+augment(model1)
+
+augment(model1) %>%
+  ggplot(aes(x = crt, y = .resid)) +
+  geom_point() +
+  labs(title = "Inspect residuals for heteroskedasticity")
+```
+
+# Coefficient plots
+
+Coefficient plots are an alternative to looking at tables of coefficients.
+
+```{r}
+model1_df <- tidy(model1, conf.int = TRUE, conf.level = .95) 
+
+model1_df %>%
+  filter(term != "(Intercept)") %>%
+  ggplot(aes(x = fct_rev(term), y = estimate)) + 
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_flip() + 
+  labs(title = "Model 1: linear regression", 
+       subtitle = "Estimated coefficient + 95% CI",
+       x = NULL, 
+       y = "coefficient")
+```
+
+These aren't standardized, so the scales are really different. 
+
+Note: `ggstance::geom_pointrangeh()` also gives a horizontal version of `geom_pointrange()`. I felt like I was already using enough packages, though...
+
+# Marginal effects plots
+
+Instead of plotting coefficients, we can use those coefficients to get predictions on the y scale at different x values. In particular, we can plot specific *counterfactual* values of x. 
+
+This is something we could do manually using the `predict()` function, but doing those calculations can be tricky with GLMs. (It's relatively easy with `lm()`.)
+
+Instead, we'll use the `ggeffects` package. The `margins` package, which is based off of a Stata command, does something similar.
+
+There are two ways of showing uncertainty in these plots:
+
+- through the **confidence intervals** of the conditional means. This incorporates the uncertainty in the *systematic* part of the model---the estimates of your coefficients.
+- through the **prediction intervals** of the data. This incorporates both the systematic uncertainty from the coefficients, and the uncertainty from the *stochastic* part of the model.
+
+First, we'll pick one covariate, `crt`. By default, `ggpredict` holds the other continuous variables constant at their mean (and categorical variables at their reference values). 
+
+```{r}
+ggpredict(model1, terms = "crt")
+```
+
+```{r}
+ggpredict(model1, terms = "crt", interval = "confidence", ci.level = .95) %>%
+  plot() +
+  labs(subtitle = "95% confidence interval")
+```
+
+```{r}
+ggpredict(model1, terms = "crt", interval = "prediction", ci.lvl = .95) %>% 
+  plot() +
+  labs(subtitle = "95% prediction interval")
+```
+
+# Interaction terms
+
+That's a simple association. Let's a second model, adding an interaction term:
+
+```{r}
+f2 <- update(f1, ~ . + crt*minority)
+model2 <- glm(f2, family = gaussian(), data = courtpenalties)
+tidy(model2)
+```
+
+Now the association between `crt` and `penalties` depends on the size of the non-white population. Let's pick 3 values of `minority` for our plot.
+
+```{r}
+model2_predictions <- ggpredict(model2, terms = c("crt", "minority [meansd]")) 
+
+plot(model2_predictions) + theme(legend.position = "bottom")
+```
+
+Again, with prediction intervals instead: 
+
+```{r}
+ggpredict(model2, 
+          terms = c("crt", "minority [meansd]"), 
+          interval = "prediction") %>% 
+  plot() + 
+  labs(subtitle = "At mean non-white pop ± 1sd, 95% prediction interval") +
+  theme(legend.position = "bottom")
+```
+
+Still want tables?
+
+```{r message=FALSE, results='asis'}
+library(texreg) # or stargazer, or pander ...
+htmlreg(list(model1, model2), doctype = FALSE)
+```
+
+# Logistic regression
+
+```{r}
+grants <- read_csv("data/fedgrants&researchclimate.csv")
+
+grants <- 
+  grants %>%
+  mutate(grant = ifelse(fedgrants > 0, 1, 0))
+
+model3 <- glm(grant ~ hidegree + budget + climate, 
+              family = binomial(link = "logit"),
+              data = grants)
+
+ggpredict(model3, terms = "budget [all]", interval = "confidence") %>% plot()
+ggpredict(model3, terms = "budget [all]", interval = "prediction") %>% plot()
+```
+
+# Resources 
+
+http://socviz.co/modeling.html
+
+https://clanfear.github.io/CSSS508/Lectures/Week10/CSSS508_Week10_reproducibility_and_model_results.html
+
+https://strengejacke.github.io/ggeffects/
